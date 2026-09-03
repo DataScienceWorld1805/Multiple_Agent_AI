@@ -203,9 +203,11 @@ GEMINI_API_KEY=tu-api-key
 ### Búsqueda y papers
 
 ```env
-SEARCH_PROVIDER=tavily   # o fake
-TAVILY_API_KEY=tvly-...  # solo si SEARCH_PROVIDER=tavily
-PAPERS_PROVIDER=arxiv    # o fake
+SEARCH_PROVIDER=duckduckgo   # web real sin API key (recomendado)
+# SEARCH_PROVIDER=tavily
+# TAVILY_API_KEY=tvly-...    # solo si SEARCH_PROVIDER=tavily
+# SEARCH_PROVIDER=fake       # offline / demos
+PAPERS_PROVIDER=arxiv        # o fake
 ```
 
 ### Variables principales
@@ -215,7 +217,7 @@ PAPERS_PROVIDER=arxiv    # o fake
 | `LLM_PROVIDER` | `openai` | `openai` · `anthropic` · `gemini` · `fake` |
 | `LLM_MODEL` | `gpt-4o-mini` | Modelo del provider elegido |
 | `LLM_TEMPERATURE` | `0.2` | Temperatura del LLM |
-| `SEARCH_PROVIDER` | `tavily` | `tavily` · `fake` |
+| `SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` · `tavily` · `fake` |
 | `PAPERS_PROVIDER` | `arxiv` | `arxiv` · `fake` |
 | `MAX_SUBQUESTIONS` | `5` | Máximo de subpreguntas del plan |
 | `MIN_SUBQUESTIONS` | `2` | Mínimo de subpreguntas |
@@ -230,7 +232,7 @@ PAPERS_PROVIDER=arxiv    # o fake
 | `LOG_LEVEL` | `INFO` | Nivel de logging |
 | `LANGSMITH_TRACING` | `false` | Activar tracing LangSmith |
 
-> `.env.example` usa `LLM_PROVIDER=gemini` y `SEARCH_PROVIDER=fake` para un arranque económico. Los defaults de `config.py` aplican si no defines `.env`.
+> `.env.example` usa `LLM_PROVIDER=gemini` y `SEARCH_PROVIDER=duckduckgo` para un arranque con web real sin Tavily. Los defaults de `config.py` aplican si no defines `.env`.
 
 ### LangSmith (opcional)
 
@@ -356,26 +358,25 @@ La **KB interna** es un corpus **local y propio** indexado en Chroma. Sirve para
 - Contrastar evidencia externa (web/arXiv) con conocimiento interno
 - Demostrar una tercera fuente en el patrón multi-agente
 
-El seed de demo está en [`research-synthesis-agent/data/kb_documents.json`](research-synthesis-agent/data/kb_documents.json) (briefs sobre fusión nuclear). Formato:
+**Estado actual:** el seed [`data/kb_documents.json`](research-synthesis-agent/data/kb_documents.json) está **vacío** (`[]`). El orchestrator **no asigna** `internal_kb` y el sintetizador **excluye** citas `kb://`. Cuando quieras reactivarla:
+
+1. Añade documentos al JSON (o apunta `KB_SEED_PATH` a tu corpus).
+2. Reinicia el servicio para reindexar en Chroma (`data/chroma/`).
+3. Vuelve a permitir `internal_kb` en el plan del orchestrator.
+
+Formato de documento:
 
 ```json
 [
   {
-    "id": "kb-fusion-1",
-    "title": "Internal Brief: Magnetic Fusion Pilots",
+    "id": "kb-1",
+    "title": "Brief interno",
     "content": "...",
     "source": "internal_kb",
-    "metadata": { "topic": "fusion", "year": "2024" }
+    "metadata": { "topic": "...", "year": "2025" }
   }
 ]
 ```
-
-Cómo usarla:
-
-1. Amplía o reemplaza el JSON con tu corpus.
-2. Apunta `KB_SEED_PATH` si usas otra ruta.
-3. Chroma persiste el índice en `data/chroma/` (ignorado por git).
-4. Cuando el orchestrator asigne `internal_kb` a una subpregunta, el `InternalKBResearcher` recupera los `KB_TOP_K` fragmentos más similares y los cita como `kb://{doc_id}`.
 
 ---
 
