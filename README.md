@@ -1,8 +1,8 @@
 # Multiple Agent AI — Research Synthesis Agent
 
-Sistema multi-agente de **investigación y síntesis** con patrón *orchestrator-worker*. Dada una pregunta de investigación, descompone el tema, investiga en paralelo (web, papers académicos y base de conocimiento interna) y genera un **informe estructurado con citas ancladas** a hallazgos reales.
+Sistema multi-agente de **investigación y síntesis** con patrón *orchestrator-worker*. Dada una pregunta de investigación, descompone el tema, investiga en paralelo (web, papers académicos y, opcionalmente, KB interna) y genera un **informe estructurado con citas ancladas** a hallazgos reales.
 
-Puedes usarlo por **CLI**, por **API HTTP** o desde una **interfaz web académica** local.
+Puedes usarlo por **CLI**, por **API HTTP** o desde una **interfaz web académica** local, con exportación a **Markdown** y **PDF**.
 
 > Paquete principal: [`research-synthesis-agent/`](research-synthesis-agent/)
 
@@ -11,14 +11,16 @@ Puedes usarlo por **CLI**, por **API HTTP** o desde una **interfaz web académic
 ## Características
 
 - **Orquestación explícita** con [LangGraph](https://github.com/langchain-ai/langgraph): `orchestrator → researchers (fan-out) → synthesizer (fan-in)`
-- **Tres fuentes en paralelo**: búsqueda web (Tavily), papers (arXiv) y KB interna (Chroma embebido)
-- **Informe estructurado**: resumen ejecutivo, secciones por subpregunta, contradicciones explícitas, limitaciones y referencias `[1]`, `[2]`…
-- **Citas grounded**: solo se citan `finding_id` reales producidos por los researchers
+- **Fuentes en paralelo**: web (DuckDuckGo / Tavily / fake), papers (arXiv) y KB interna (Chroma; **deshabilitada por defecto** mientras el seed esté vacío)
+- **Informe estructurado**: resumen ejecutivo, secciones por subpregunta, contradicciones, limitaciones y referencias `[1]`, `[2]`…
+- **Citas grounded**: solo se citan `finding_id` reales; se excluyen citas `kb://` mientras la KB esté vacía
+- **Referencias web alineadas a la consulta**: ranking por relevancia y filtrado de hits débiles
 - **Degradación parcial**: si un worker falla, el grafo continúa con el resto
 - **Reintentos inteligentes**: reformulación de subpreguntas débiles (`FAILED` / `INSUFFICIENT`)
-- **Multi-LLM**: OpenAI, Anthropic, Gemini o modo `fake` (sin APIs, ideal para demos y CI)
-- **Interfaz web** (`Synthesis`): UI académica para lanzar consultas y leer el informe
-- **API HTTP** (FastAPI): jobs asíncronos con polling (`POST/GET /api/research`)
+- **Multi-LLM**: OpenAI, Anthropic, Gemini o modo `fake`
+- **Resiliencia Gemini**: reintentos ante `503`/`429` (`ServerError`/`ClientError`) + **fallback automático** a modelos lite
+- **Interfaz web** (`Synthesis`): UI académica, jobs con polling, export **Markdown** y **PDF** (texto real vía jsPDF)
+- **API HTTP** (FastAPI): `POST/GET /api/research` + OpenAPI en `/docs`
 - **Docker-first**: build multi-stage, usuario no-root, Compose listo para usar
 
 ---
@@ -34,7 +36,7 @@ Puedes usarlo por **CLI**, por **API HTTP** o desde una **interfaz web académic
             ┌───────────────────────┼───────────────────────┐
             ▼                       ▼                       ▼
     WebResearcher          PapersResearcher       InternalKBResearcher
-      (Tavily/fake)             (arXiv/fake)            (Chroma)
+  (DuckDuckGo/Tavily/fake)      (arXiv/fake)         (Chroma; opcional)
             │                       │                       │
             └───────────────────────┼───────────────────────┘
                                     │ fan-in
@@ -48,25 +50,26 @@ Puedes usarlo por **CLI**, por **API HTTP** o desde una **interfaz web académic
               ▼                     ▼                     ▼
             CLI                  API HTTP              UI web
          (src.main)             (src.api)            (frontend/)
+                                                      MD + PDF
 ```
 
 | Componente | Rol |
 |------------|-----|
-| **Orchestrator** | Descompone la query en 2–5 subpreguntas y asigna fuentes (`web` / `paper` / `internal_kb`) |
-| **WebResearcher** | Busca evidencia en la web vía Tavily (o fake) |
-| **PapersResearcher** | Recupera papers de arXiv (sin API key) |
-| **InternalKBResearcher** | Consulta una KB vectorial local (Chroma + seed JSON) |
+| **Orchestrator** | Descompone la query en 2–5 subpreguntas; asigna `web` / `paper` (no `internal_kb` mientras la KB esté vacía) |
+| **WebResearcher** | Busca evidencia en internet (DuckDuckGo por defecto) y filtra por relevancia |
+| **PapersResearcher** | Recupera papers de arXiv |
+| **InternalKBResearcher** | Consulta Chroma si hay documentos seed; hoy el seed es `[]` |
 | **Synthesizer** | Integra hallazgos, detecta contradicciones y emite el informe citado |
-| **API + UI** | Expone el grafo como jobs HTTP y renderiza el informe en el navegador |
+| **API + UI** | Jobs HTTP + UI académica con export Markdown/PDF |
 
 ### Flujo de una consulta
 
 1. El usuario envía una pregunta (CLI, UI o API).
-2. El **orchestrator** crea un `ResearchPlan` con subpreguntas y fuentes asignadas.
-3. Los **researchers** se ejecutan en paralelo (`asyncio.gather`), con timeout y reintentos.
-4. Si hay resultados `FAILED` / `INSUFFICIENT`, el orchestrator puede **reformular** y reintentar.
-5. El **synthesizer** produce un `FinalReport` (JSON + Markdown).
-6. CLI imprime Markdown; la UI muestra el informe tipado y permite exportarlo.
+2. El **orchestrator** crea un `ResearchPlan` con subpreguntas concretas y fuentes habilitadas.
+3. Los **researchers** corren en paralelo (`asyncio.gather`), con timeout y reintentos.
+4. Si hay `FAILED` / `INSUFFICIENT`, el orchestrator puede **reformular** y reintentar.
+5. El **synthesizer** produce un `FinalReport` (JSON + Markdown) y solo lista referencias usadas (web/paper).
+6. CLI imprime Markdown; la UI muestra el informe y permite exportar **`.md`** o **`.pdf`**.
 
 ---
 
@@ -78,11 +81,11 @@ Puedes usarlo por **CLI**, por **API HTTP** o desde una **interfaz web académic
 | Orquestación | LangGraph + LangChain Core |
 | Modelos | Pydantic v2 |
 | LLMs | OpenAI · Anthropic · Gemini (`google-genai`) · fake |
-| Web | Tavily (`httpx` + retries) |
-| Papers | arXiv (paquete `arxiv`) |
+| Web | DuckDuckGo (`duckduckgo-search`) · Tavily · fake |
+| Papers | arXiv (`arxiv`) |
 | Vector store | ChromaDB embebido |
 | API | FastAPI + Uvicorn |
-| Frontend | HTML/CSS/JS estático (servido por FastAPI) |
+| Frontend | HTML/CSS/JS + jsPDF (export PDF) |
 | Observabilidad | Logs JSON · LangSmith (opcional) |
 | Runtime | Docker Compose · Makefile |
 
@@ -106,13 +109,14 @@ Abre [http://127.0.0.1:8000](http://127.0.0.1:8000):
 
 1. Escribe una pregunta de investigación.
 2. Pulsa **Iniciar investigación**.
-3. Espera el job (puede tardar 1–3 minutos según LLM y fuentes).
+3. Espera el job (puede tardar 1–3 minutos según LLM, web y arXiv; Gemini puede reintentar o usar fallback si hay `503`).
 4. Revisa resumen, hallazgos, contradicciones, limitaciones y referencias.
-5. Exporta el Markdown o abre la sección de metodología (plan + workers).
+5. Exporta con **Exportar Markdown** o **Exportar PDF**.
+6. Opcional: abre **Metodología** (plan + workers).
 
 Documentación interactiva de la API: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
-### Opción B — Docker (CLI)
+### Opción B — Docker (UI)
 
 Requisitos: **Docker** + **Docker Compose**.
 
@@ -121,26 +125,30 @@ git clone https://github.com/DataScienceWorld1805/Multiple_Agent_AI.git
 cd Multiple_Agent_AI/research-synthesis-agent
 
 cp .env.example .env
-# Edita .env y añade al menos la API key del LLM que uses
+# Edita .env y añade al menos la API key del LLM
 
 make docker-build
-make docker-run QUERY='¿Cuál es el estado actual de la fusión nuclear como fuente de energía comercial?'
+make docker-serve
+# http://127.0.0.1:8000
 ```
 
-Para guardar el informe:
+Rebuild limpio (cuando cambies código o front):
 
 ```bash
+docker compose build --no-cache
+docker compose run --rm -d -p 8000:8000 --name research-synthesis-ui app python -m src.api
+```
+
+### Opción C — Docker / CLI
+
+```bash
+make docker-run QUERY='¿Cuál es el estado actual de la fusión nuclear como fuente de energía comercial?'
+
+# Guardar Markdown
 docker compose run --rm app python -m src.main "tu pregunta" -o /app/data/report.md
 ```
 
-UI en Docker:
-
-```bash
-make docker-serve
-# luego http://127.0.0.1:8000
-```
-
-### Opción C — CLI local
+### Opción D — CLI local
 
 ```bash
 cd research-synthesis-agent
@@ -171,7 +179,7 @@ Luego:
 ```bash
 make run QUERY='What is the current status of commercial nuclear fusion?'
 # o
-make serve   # UI con respuestas deterministas
+make serve
 ```
 
 ---
@@ -199,14 +207,20 @@ GEMINI_API_KEY=tu-api-key
 # ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-> **Nota sobre Gemini:** modelos populares pueden devolver `503` por alta demanda o `404` si quedaron deprecados. El ejemplo del proyecto usa `gemini-3.6-flash`. Alternativas útiles: `gemini-flash-lite-latest`, `gemini-3.5-flash`, `gemini-3.1-flash-lite`.
+> **Nota sobre Gemini:** modelos saturados pueden devolver `503 UNAVAILABLE` (sobre todo en corridas largas con varias llamadas). El cliente:
+>
+> 1. Reintenta ante `429`/`503` (`ClientError` y `ServerError`)
+> 2. Si el modelo primario sigue fallando, prueba **fallbacks** (`gemini-flash-lite-latest`, `gemini-3.5-flash-lite`, etc.)
+>
+> Modelo por defecto del ejemplo: `gemini-3.6-flash`. Alternativas: `gemini-3.5-flash`, `gemini-flash-lite-latest`.
+
 ### Búsqueda y papers
 
 ```env
 SEARCH_PROVIDER=duckduckgo   # web real sin API key (recomendado)
 # SEARCH_PROVIDER=tavily
 # TAVILY_API_KEY=tvly-...    # solo si SEARCH_PROVIDER=tavily
-# SEARCH_PROVIDER=fake       # offline / demos
+# SEARCH_PROVIDER=fake       # offline / tests
 PAPERS_PROVIDER=arxiv        # o fake
 ```
 
@@ -215,7 +229,7 @@ PAPERS_PROVIDER=arxiv        # o fake
 | Variable | Default (código) | Descripción |
 |----------|------------------|-------------|
 | `LLM_PROVIDER` | `openai` | `openai` · `anthropic` · `gemini` · `fake` |
-| `LLM_MODEL` | `gpt-4o-mini` | Modelo del provider elegido |
+| `LLM_MODEL` | `gpt-4o-mini` | Modelo del provider (ej. `gemini-3.6-flash`) |
 | `LLM_TEMPERATURE` | `0.2` | Temperatura del LLM |
 | `SEARCH_PROVIDER` | `duckduckgo` | `duckduckgo` · `tavily` · `fake` |
 | `PAPERS_PROVIDER` | `arxiv` | `arxiv` · `fake` |
@@ -232,7 +246,7 @@ PAPERS_PROVIDER=arxiv        # o fake
 | `LOG_LEVEL` | `INFO` | Nivel de logging |
 | `LANGSMITH_TRACING` | `false` | Activar tracing LangSmith |
 
-> `.env.example` usa `LLM_PROVIDER=gemini` y `SEARCH_PROVIDER=duckduckgo` para un arranque con web real sin Tavily. Los defaults de `config.py` aplican si no defines `.env`.
+> `.env.example` usa `LLM_PROVIDER=gemini`, `LLM_MODEL=gemini-3.6-flash` y `SEARCH_PROVIDER=duckduckgo`.
 
 ### LangSmith (opcional)
 
@@ -246,25 +260,24 @@ LANGCHAIN_PROJECT=research-synthesis-agent
 
 ## Interfaz web
 
-La UI vive en [`research-synthesis-agent/frontend/`](research-synthesis-agent/frontend/) y la sirve FastAPI junto a la API.
+La UI vive en [`research-synthesis-agent/frontend/`](research-synthesis-agent/frontend/) y la sirve FastAPI.
 
 | Archivo | Rol |
 |---------|-----|
-| `frontend/index.html` | Estructura de la página (consulta + informe) |
-| `frontend/styles.css` | Estilo académico (serif para lectura, navy institucional) |
-| `frontend/app.js` | Lanza jobs, hace polling y renderiza el `FinalReport` |
+| `frontend/index.html` | Estructura (consulta + informe + botones de export) |
+| `frontend/styles.css` | Estilo académico |
+| `frontend/app.js` | Jobs, polling, render del informe, export MD/PDF |
 
 ### Qué muestra
 
 1. **Resumen ejecutivo**
-2. **Hallazgos** (secciones por subpregunta, con enlaces a citas `[n]`)
+2. **Hallazgos** (secciones por subpregunta, con enlaces a citas)
 3. **Contradicciones** (si las hay)
 4. **Limitaciones**
-5. **Referencias** (bibliografía con tipo de fuente: web / paper / internal_kb)
-6. **Metodología** (desplegable): plan del orchestrator + estado de cada worker
-7. **Exportar Markdown** del informe completo
-
-La barra de estado indica etapas aproximadas mientras el job corre en segundo plano.
+5. **Referencias** (web / paper; sin KB mientras el seed esté vacío)
+6. **Metodología** (desplegable): plan + estado de workers
+7. **Exportar Markdown** → `research-report.md`
+8. **Exportar PDF** → `research-report.pdf` (generado con jsPDF: texto sólido, A4, saltos de página y numeración)
 
 ---
 
@@ -275,9 +288,9 @@ Entrypoint: `python -m src.api` (Uvicorn en el puerto **8000**).
 | Método | Ruta | Descripción |
 |--------|------|-------------|
 | `GET` | `/` | UI web |
-| `GET` | `/api/health` | Estado del servicio + providers configurados |
+| `GET` | `/api/health` | Estado + providers configurados |
 | `POST` | `/api/research` | Crea un job de investigación |
-| `GET` | `/api/research/{job_id}` | Consulta estado / resultado del job |
+| `GET` | `/api/research/{job_id}` | Estado / resultado del job |
 | `GET` | `/docs` | Swagger UI (OpenAPI) |
 
 ### Crear investigación
@@ -286,7 +299,7 @@ Entrypoint: `python -m src.api` (Uvicorn en el puerto **8000**).
 POST /api/research
 Content-Type: application/json
 
-{ "query": "¿Cuál es el estado actual de la fusión nuclear comercial?" }
+{ "query": "¿Cuál es el paso a paso para redactar un informe de escena del crimen?" }
 ```
 
 Respuesta:
@@ -306,14 +319,9 @@ GET /api/research/{job_id}
 
 Estados: `queued` → `running` → `done` | `failed`.
 
-Cuando `status` es `done`, la respuesta incluye:
+Cuando `status` es `done`, incluye `plan`, `results_summary`, `report` (`FinalReport`) y `errors`.
 
-- `plan` — plan de subpreguntas
-- `results_summary` — resumen por worker (tipo, status, hallazgos, duración)
-- `report` — `FinalReport` completo (`executive_summary`, `sections`, `contradictions`, `citations`, `limitations`, `markdown`)
-- `errors` — errores no fatales del grafo
-
-Los jobs se guardan **en memoria** del proceso (se pierden al reiniciar el servidor). Suficiente para uso local / demos.
+Los jobs viven **en memoria** del proceso (se pierden al reiniciar). Pensado para uso local / demos.
 
 ---
 
@@ -325,8 +333,8 @@ python -m src.main QUERY... [-o/--output PATH]
 
 | Argumento | Descripción |
 |-----------|-------------|
-| `QUERY` | Pregunta o tema de investigación (una o más palabras) |
-| `-o` / `--output` | Ruta opcional para escribir el Markdown (también se imprime por stdout) |
+| `QUERY` | Pregunta o tema de investigación |
+| `-o` / `--output` | Ruta opcional para escribir el Markdown |
 
 Ejemplos:
 
@@ -338,33 +346,34 @@ make run QUERY='¿Qué avances hay en stellarators?'
 
 ### Salida del informe
 
-El Markdown generado incluye:
+1. **Executive Summary**
+2. **Secciones** por subpregunta
+3. **Contradictions**
+4. **Limitations**
+5. **References** (citas numeradas ligadas a findings reales)
 
-1. **Executive Summary** — síntesis de alto nivel  
-2. **Secciones** — una por subpregunta del plan  
-3. **Contradictions** — conflictos entre fuentes (no se promedian)  
-4. **Limitations** — huecos y sesgos detectados  
-5. **References** — citas numeradas ligadas a findings reales  
-
-Programáticamente, el mismo contenido está en `FinalReport` tras `await build_graph().arun(query)`.
+Programáticamente: `await build_graph().arun(query)` → `state["report"]`.
 
 ---
 
 ## Base de conocimiento interna (KB)
 
-La **KB interna** es un corpus **local y propio** indexado en Chroma. Sirve para:
+Corpus **local** indexado en Chroma para notas privadas / institucionales.
 
-- Incorporar notas institucionales, briefs o documentos privados que no están en la web
-- Contrastar evidencia externa (web/arXiv) con conocimiento interno
-- Demostrar una tercera fuente en el patrón multi-agente
+**Estado actual**
 
-**Estado actual:** el seed [`data/kb_documents.json`](research-synthesis-agent/data/kb_documents.json) está **vacío** (`[]`). El orchestrator **no asigna** `internal_kb` y el sintetizador **excluye** citas `kb://`. Cuando quieras reactivarla:
+- Seed: [`data/kb_documents.json`](research-synthesis-agent/data/kb_documents.json) = `[]`
+- Al arrancar con seed vacío, Chroma se **resetea** (sin documentos residuales)
+- El orchestrator **no asigna** `internal_kb`
+- El sintetizador **excluye** citas `kb://`
 
-1. Añade documentos al JSON (o apunta `KB_SEED_PATH` a tu corpus).
-2. Reinicia el servicio para reindexar en Chroma (`data/chroma/`).
+**Para reactivarla**
+
+1. Añade documentos al JSON (o cambia `KB_SEED_PATH`).
+2. Reinicia el servicio para reindexar.
 3. Vuelve a permitir `internal_kb` en el plan del orchestrator.
 
-Formato de documento:
+Formato:
 
 ```json
 [
@@ -402,16 +411,13 @@ Enums:
 ```bash
 cd research-synthesis-agent
 
-# En Docker (providers fake, sin APIs)
-make docker-test
-
-# En local
-make test      # pytest -q
-make lint      # ruff + black --check
-make format    # auto-fix
+make docker-test   # providers fake, sin APIs
+make test          # pytest -q
+make lint          # ruff + black --check
+make format        # auto-fix
 ```
 
-Hay tests unitarios (orchestrator, researchers, synthesizer) y un e2e con fakes inyectados.
+Hay tests unitarios (orchestrator, researchers, synthesizer) y un e2e con fakes.
 
 ---
 
@@ -419,12 +425,12 @@ Hay tests unitarios (orchestrator, researchers, synthesizer) y un e2e con fakes 
 
 | Target | Descripción |
 |--------|-------------|
-| `serve` | Arranca API + UI en `http://127.0.0.1:8000` |
-| `run` | Corre el CLI en el host (`QUERY=...`) |
-| `test` | Suite de tests local |
+| `serve` | API + UI en `http://127.0.0.1:8000` |
+| `run` | CLI en el host (`QUERY=...`) |
+| `test` | Suite local |
 | `lint` / `format` | Ruff + Black |
-| `docker-build` | Construye la imagen multi-stage |
-| `docker-run` | Ejecuta el CLI vía Compose |
+| `docker-build` | Construye la imagen |
+| `docker-run` | CLI vía Compose |
 | `docker-serve` | API + UI en contenedor (`-p 8000:8000`) |
 | `docker-test` | `pytest` en contenedor con providers `fake` |
 
@@ -440,21 +446,21 @@ Multiple_Agent_AI/
     ├── src/
     │   ├── agents/                   # Orchestrator, researchers, synthesizer
     │   │   └── researchers/          # web · papers · internal_kb
-    │   ├── graph/                    # Wiring LangGraph + arun()
-    │   ├── schemas/                  # Modelos Pydantic + GraphState
-    │   ├── providers/                # Tavily, arXiv, Chroma
-    │   ├── config.py                 # Settings (pydantic-settings)
-    │   ├── llm.py                    # Factory multi-provider
+    │   ├── graph/                    # LangGraph + arun()
+    │   ├── schemas/                  # Pydantic + GraphState
+    │   ├── providers/                # DuckDuckGo/Tavily, arXiv, Chroma
+    │   ├── config.py
+    │   ├── llm.py                    # Multi-provider + resiliencia Gemini
     │   ├── api.py                    # FastAPI (jobs + static UI)
     │   ├── main.py                   # CLI
     │   └── logging_utils.py
-    ├── frontend/                     # UI académica
+    ├── frontend/                     # UI académica + export MD/PDF
     │   ├── index.html
     │   ├── styles.css
     │   └── app.js
-    ├── tests/                        # unit + integration
+    ├── tests/
     ├── data/
-    │   └── kb_documents.json         # Seed KB
+    │   └── kb_documents.json         # Seed KB (vacío por defecto)
     ├── Dockerfile
     ├── docker-compose.yml
     ├── Makefile
@@ -467,11 +473,10 @@ Multiple_Agent_AI/
 
 ## Seguridad
 
-- **Nunca** subas `.env` ni API keys. El `.gitignore` del paquete ya excluye `.env`, `.env.local` y `data/chroma/`.
-- Las claves solo se leen por variables de entorno / `env_file` de Compose.
+- **Nunca** subas `.env` ni API keys. El `.gitignore` excluye `.env`, `.env.local` y `data/chroma/`.
+- Las claves solo se leen por entorno / `env_file` de Compose.
 - La imagen Docker corre como usuario no-root `app`.
-- `.dockerignore` excluye secretos, venvs y caches del build.
-- La API local no implementa autenticación: pensada para uso en localhost.
+- La API local **no** tiene autenticación (uso en localhost).
 
 Claves típicas: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `TAVILY_API_KEY`, `LANGCHAIN_API_KEY`.
 
@@ -479,48 +484,47 @@ Claves típicas: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `TAVIL
 
 ## Por qué LangGraph
 
-Se eligió **LangGraph** (frente a SDKs acoplados a un único vendor) porque:
+- Nativo en Python con tipado + `asyncio`
+- Grafo explícito orchestrator → workers → synthesizer
+- Estado tipado, degradación parcial y LangSmith opcional
+- Desacoplado del vendor de LLM
 
-- Es nativo en Python y encaja con tipado + `asyncio`
-- Modela de forma explícita el grafo orchestrator → workers → synthesizer
-- Permite estado tipado, degradación parcial y observabilidad vía LangSmith
-- No acopla el orquestador a un único proveedor de modelo
-
-La capa FastAPI/UI es un **adaptador**: no reemplaza el grafo; solo lo invoca (`build_graph().arun(query)`).
+FastAPI/UI son **adaptadores**: invocan `build_graph().arun(query)` sin reemplazar el grafo.
 
 ---
 
 ## Limitaciones actuales
 
-- Un solo paquete en el monorepo (`research-synthesis-agent`)
-- Los jobs de la API viven en memoria (no hay cola persistente tipo Redis)
-- La UI aún no hace streaming fino por nodo del grafo (solo estados de job + hints)
-- La KB de demo está orientada al tema de fusión nuclear
-- Los informes son sintéticos: la calidad depende de las fuentes y del LLM configurado
-- Sin autenticación en la API (uso local)
+- Un solo paquete en el monorepo
+- Jobs de la API en memoria (sin cola persistente)
+- UI sin streaming fino por nodo (polling + hints de etapa)
+- KB deshabilitada por seed vacío (reactivable)
+- Calidad del informe depende de LLM + fuentes externas
+- Gemini puede demorar más si reintenta o cambia a un modelo fallback
+- Sin autenticación en la API
 
 ---
 
 ## Contribuir
 
-Ideas bienvenidas: nuevos researchers, persistencia de jobs, streaming SSE de etapas, más idiomas en el informe, CI con GitHub Actions, o ampliar la KB.
+Ideas bienvenidas: nuevos researchers, persistencia de jobs, SSE de etapas, reactivar/ampliar la KB, CI con GitHub Actions, más idiomas en el informe.
 
 1. Fork del repo  
-2. Crea una rama (`git checkout -b feature/mi-mejora`)  
-3. Asegura tests (`make docker-test` o `make test`) y lint (`make lint`)  
-4. Abre un Pull Request  
+2. Rama (`git checkout -b feature/mi-mejora`)  
+3. Tests (`make docker-test` o `make test`) y lint (`make lint`)  
+4. Pull Request  
 
 ---
 
 ## Disclaimer
 
-Este proyecto es experimental / educativo. Los informes generados **no sustituyen** revisión humana, asesoría profesional ni fuentes primarias verificadas. Valida siempre las citas antes de usar el contenido en contextos críticos.
+Proyecto experimental / educativo. Los informes **no sustituyen** revisión humana ni fuentes primarias verificadas. Valida siempre las citas antes de usar el contenido en contextos críticos.
 
 ---
 
 ## Licencia
 
-Este proyecto se publica bajo la [licencia MIT](LICENSE). Podés usarlo, copiarlo, modificarlo, distribuirlo y usarlo en proyectos comerciales, con la única condición de conservar el aviso de copyright y la licencia.
+Publicado bajo la [licencia MIT](LICENSE).
 
 ---
 
