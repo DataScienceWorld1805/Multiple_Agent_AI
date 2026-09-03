@@ -88,6 +88,16 @@ El CLI imprime el informe Markdown por stdout. Para guardarlo en un archivo:
 docker compose run --rm app python -m src.main "tu pregunta" -o /app/data/report.md
 ```
 
+### Interfaz web (local)
+
+```bash
+cd research-synthesis-agent
+pip install -r requirements.txt
+python -m src.api
+```
+
+Abre [http://127.0.0.1:8000](http://127.0.0.1:8000): escribe una pregunta, lanza la investigación y consulta el informe (resumen, secciones, citas, plan y workers). Con Docker: `make docker-serve`.
+
 ### Modo demo / offline (sin APIs)
 
 En `.env`:
@@ -115,7 +125,7 @@ Copia `.env.example` → `.env` dentro de `research-synthesis-agent/`.
 ```env
 # Gemini (recomendado en .env.example)
 LLM_PROVIDER=gemini
-LLM_MODEL=gemini-2.0-flash
+LLM_MODEL=gemini-flash-latest
 GEMINI_API_KEY=tu-api-key
 
 # OpenAI
