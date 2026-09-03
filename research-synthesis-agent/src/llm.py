@@ -132,6 +132,15 @@ class AnthropicLLMClient(LLMClient):
 class GeminiLLMClient(LLMClient):
     """Google Gemini client via the google-genai SDK."""
 
+    _DEFAULT_FALLBACKS = (
+        "gemini-flash-lite-latest",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-3.7-flash",
+    )
+
     def __init__(self, settings: Settings) -> None:
         from google import genai
         from google.genai import types
@@ -142,6 +151,14 @@ class GeminiLLMClient(LLMClient):
         self._model = settings.llm_model
         self._temperature = settings.llm_temperature
         self._types = types
+        # Primary first, then unique fallbacks (skip duplicates of primary).
+        ordered = [self._model, *self._DEFAULT_FALLBACKS]
+        seen: set[str] = set()
+        self._models: list[str] = []
+        for name in ordered:
+            if name not in seen:
+                seen.add(name)
+                self._models.append(name)
 
     async def complete(self, system: str, user: str) -> str:
         from google.genai import errors as genai_errors
@@ -153,28 +170,58 @@ class GeminiLLMClient(LLMClient):
         )
 
         def _transient(exc: BaseException) -> bool:
-            if isinstance(exc, genai_errors.ClientError):
-                code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+            if isinstance(exc, (genai_errors.ClientError, genai_errors.ServerError)):
+                code = getattr(exc, "code", None)
+                if code is None:
+                    # Fallback: parse leading status from message, e.g. "503 UNAVAILABLE..."
+                    message = str(exc)
+                    code = int(message.split(" ", 1)[0]) if message[:3].isdigit() else None
                 return code in {429, 503}
-            status = getattr(exc, "status_code", None)
-            return status in {429, 503}
+            return False
 
-        async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(4),
-            wait=wait_exponential(multiplier=1, min=1, max=12),
-            retry=retry_if_exception(_transient),
-            reraise=True,
-        ):
-            with attempt:
-                response = await self._client.aio.models.generate_content(
-                    model=self._model,
-                    contents=user,
-                    config=self._types.GenerateContentConfig(
-                        system_instruction=system,
-                        temperature=self._temperature,
-                    ),
+        last_error: BaseException | None = None
+        for model in self._models:
+            try:
+                async for attempt in AsyncRetrying(
+                    stop=stop_after_attempt(5),
+                    wait=wait_exponential(multiplier=1.5, min=2, max=20),
+                    retry=retry_if_exception(_transient),
+                    reraise=True,
+                ):
+                    with attempt:
+                        response = await self._client.aio.models.generate_content(
+                            model=model,
+                            contents=user,
+                            config=self._types.GenerateContentConfig(
+                                system_instruction=system,
+                                temperature=self._temperature,
+                            ),
+                        )
+                        text = (response.text or "").strip()
+                        if model != self._model:
+                            logger.info(
+                                "Gemini fallback model used",
+                                extra={
+                                    "agent": "llm",
+                                    "extra": {"model": model, "primary": self._model},
+                                },
+                            )
+                        return text
+            except (genai_errors.ClientError, genai_errors.ServerError) as exc:
+                last_error = exc
+                if not _transient(exc):
+                    raise
+                logger.warning(
+                    "Gemini model unavailable, trying fallback",
+                    extra={
+                        "agent": "llm",
+                        "extra": {"model": model, "error": str(exc)[:180]},
+                    },
                 )
-                return (response.text or "").strip()
+                continue
+
+        if last_error is not None:
+            raise last_error
         return ""
 
 
