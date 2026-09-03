@@ -245,6 +245,43 @@ document.getElementById("download-md").addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
+document.getElementById("download-pdf").addEventListener("click", async () => {
+  if (reportEl.hidden) return;
+  if (typeof html2pdf === "undefined") {
+    showError("No se pudo cargar el generador de PDF. Revisa la conexión e inténtalo de nuevo.");
+    errorPanel.hidden = false;
+    return;
+  }
+
+  const pdfBtn = document.getElementById("download-pdf");
+  const actions = reportEl.querySelector(".report-actions");
+  const meta = reportEl.querySelector(".meta-panel");
+  const prevActionsDisplay = actions ? actions.style.display : "";
+  const prevMetaDisplay = meta ? meta.style.display : "";
+  pdfBtn.disabled = true;
+  if (actions) actions.style.display = "none";
+  if (meta) meta.style.display = "none";
+
+  try {
+    const opt = {
+      margin: [12, 12, 12, 12],
+      filename: "research-report.pdf",
+      image: { type: "jpeg", quality: 0.98 },
+      html2canvas: { scale: 2, useCORS: true, logging: false },
+      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
+      pagebreak: { mode: ["css", "legacy"] },
+    };
+    await html2pdf().set(opt).from(reportEl).save();
+  } catch (err) {
+    showError(err.message || String(err));
+    errorPanel.hidden = false;
+  } finally {
+    if (actions) actions.style.display = prevActionsDisplay;
+    if (meta) meta.style.display = prevMetaDisplay;
+    pdfBtn.disabled = false;
+  }
+});
+
 document.getElementById("new-research").addEventListener("click", () => {
   hidePanels();
   queryEl.focus();
