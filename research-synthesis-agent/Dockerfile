@@ -37,6 +37,7 @@ COPY --from=builder /opt/venv /opt/venv
 
 COPY pyproject.toml README.md ./
 COPY src ./src
+COPY frontend ./frontend
 COPY data ./data
 COPY tests ./tests
 
