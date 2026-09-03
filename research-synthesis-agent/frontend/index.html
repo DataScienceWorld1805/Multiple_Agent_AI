@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Synthesis — Research Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+
+    <main class="shell">
+      <section class="hero" id="hero">
+        <p class="brand">Synthesis</p>
+        <h1 class="headline">Investiga. Contrasta. Sintetiza.</h1>
+        <p class="lede">
+          Un orquestador descompone tu pregunta; workers buscan en web, papers y
+          KB interna; el sintetizador entrega un informe con citas.
+        </p>
+
+        <form class="query-form" id="research-form">
+          <label class="sr-only" for="query">Pregunta de investigación</label>
+          <textarea
+            id="query"
+            name="query"
+            rows="4"
+            maxlength="2000"
+            required
+            placeholder="Ej. ¿Cuál es el estado actual de la fusión nuclear como fuente de energía comercial?"
+          ></textarea>
+          <div class="form-row">
+            <p class="hint" id="config-hint">Cargando configuración…</p>
+            <button type="submit" class="cta" id="submit-btn">
+              Lanzar investigación
+            </button>
+          </div>
+        </form>
+
+        <div class="status-panel" id="status-panel" hidden>
+          <div class="status-pulse" aria-hidden="true"></div>
+          <div>
+            <p class="status-label" id="status-label">Preparando…</p>
+            <p class="status-meta" id="status-meta"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="report" id="report" hidden>
+        <header class="report-header">
+          <div>
+            <p class="report-kicker">Informe</p>
+            <h2 id="report-query"></h2>
+          </div>
+          <div class="report-actions">
+            <button type="button" class="ghost" id="download-md">
+              Descargar Markdown
+            </button>
+            <button type="button" class="ghost" id="new-research">
+              Nueva pregunta
+            </button>
+          </div>
+        </header>
+
+        <article class="block">
+          <h3>Resumen ejecutivo</h3>
+          <p id="executive-summary"></p>
+        </article>
+
+        <div id="sections"></div>
+
+        <article class="block" id="contradictions-block" hidden>
+          <h3>Contradicciones</h3>
+          <ul id="contradictions"></ul>
+        </article>
+
+        <article class="block" id="limitations-block" hidden>
+          <h3>Limitaciones</h3>
+          <ul id="limitations"></ul>
+        </article>
+
+        <article class="block" id="citations-block" hidden>
+          <h3>Referencias</h3>
+          <ol id="citations"></ol>
+        </article>
+
+        <details class="meta-panel">
+          <summary>Plan y workers</summary>
+          <div id="plan-view"></div>
+          <div id="results-view"></div>
+        </details>
+      </section>
+
+      <section class="error-panel" id="error-panel" hidden>
+        <h2>No se pudo completar</h2>
+        <p id="error-message"></p>
+        <button type="button" class="cta" id="retry-btn">Reintentar</button>
+      </section>
+    </main>
+
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>
