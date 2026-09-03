@@ -144,15 +144,38 @@ class GeminiLLMClient(LLMClient):
         self._types = types
 
     async def complete(self, system: str, user: str) -> str:
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=user,
-            config=self._types.GenerateContentConfig(
-                system_instruction=system,
-                temperature=self._temperature,
-            ),
+        from google.genai import errors as genai_errors
+        from tenacity import (
+            AsyncRetrying,
+            retry_if_exception,
+            stop_after_attempt,
+            wait_exponential,
         )
-        return (response.text or "").strip()
+
+        def _transient(exc: BaseException) -> bool:
+            if isinstance(exc, genai_errors.ClientError):
+                code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+                return code in {429, 503}
+            status = getattr(exc, "status_code", None)
+            return status in {429, 503}
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(4),
+            wait=wait_exponential(multiplier=1, min=1, max=12),
+            retry=retry_if_exception(_transient),
+            reraise=True,
+        ):
+            with attempt:
+                response = await self._client.aio.models.generate_content(
+                    model=self._model,
+                    contents=user,
+                    config=self._types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=self._temperature,
+                    ),
+                )
+                return (response.text or "").strip()
+        return ""
 
 
 def create_llm_client(settings: Settings | None = None) -> LLMClient:
