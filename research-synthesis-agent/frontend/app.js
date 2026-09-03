@@ -12,6 +12,7 @@ const configHint = document.getElementById("config-hint");
 let pollTimer = null;
 let lastMarkdown = "";
 let lastQuery = "";
+let lastReport = null;
 
 const STAGE_HINTS = [
   "Elaborando el plan de investigación…",
@@ -55,11 +56,22 @@ function linkCitations(text) {
   return safe.replace(/\[(\d+)\]/g, '<a class="citation-link" href="#cite-$1">[$1]</a>');
 }
 
+function stripMarkdownLite(text) {
+  return String(text || "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/\*(.*?)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[(\d+)\]/g, "[$1]")
+    .replace(/[ \t]+\n/g, "\n")
+    .trim();
+}
+
 function renderReport(job) {
   const report = job.report;
   if (!report) return;
 
   lastMarkdown = report.markdown || "";
+  lastReport = report;
   document.getElementById("report-query").textContent = report.query || job.query;
   document.getElementById("executive-summary").innerHTML = linkCitations(
     report.executive_summary || ""
@@ -202,6 +214,153 @@ async function pollJob(jobId) {
   }, 1500);
 }
 
+function exportReportPdf(report) {
+  const jspdfNS = window.jspdf;
+  if (!jspdfNS || !jspdfNS.jsPDF) {
+    throw new Error("No se pudo cargar jsPDF. Revisa la conexión e inténtalo de nuevo.");
+  }
+
+  const doc = new jspdfNS.jsPDF({
+    unit: "mm",
+    format: "a4",
+    orientation: "portrait",
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const marginX = 18;
+  const marginTop = 18;
+  const marginBottom = 18;
+  const maxWidth = pageWidth - marginX * 2;
+  let y = marginTop;
+
+  const ensureSpace = (needed) => {
+    if (y + needed <= pageHeight - marginBottom) return;
+    doc.addPage();
+    y = marginTop;
+  };
+
+  const writeParagraph = (text, options = {}) => {
+    const {
+      size = 11,
+      style = "normal",
+      color = [20, 20, 20],
+      lineHeight = 6,
+      gapAfter = 3,
+      indent = 0,
+    } = options;
+    const clean = stripMarkdownLite(text);
+    if (!clean) return;
+
+    doc.setFont("helvetica", style);
+    doc.setFontSize(size);
+    doc.setTextColor(color[0], color[1], color[2]);
+    const lines = doc.splitTextToSize(clean, maxWidth - indent);
+    for (const line of lines) {
+      ensureSpace(lineHeight);
+      doc.text(line, marginX + indent, y);
+      y += lineHeight;
+    }
+    y += gapAfter;
+  };
+
+  const writeHeading = (text, level = 1) => {
+    const sizes = { 1: 18, 2: 14, 3: 12 };
+    const gaps = { 1: 5, 2: 4, 3: 3 };
+    ensureSpace(sizes[level] * 0.5 + 8);
+    if (level > 1 && y > marginTop + 2) y += 2;
+    writeParagraph(text, {
+      size: sizes[level] || 12,
+      style: "bold",
+      color: [15, 15, 15],
+      lineHeight: level === 1 ? 8 : 7,
+      gapAfter: gaps[level] || 3,
+    });
+  };
+
+  writeHeading("Informe de síntesis", 1);
+  writeParagraph(report.query || lastQuery || "Consulta", {
+    size: 12,
+    style: "bold",
+    color: [30, 30, 30],
+    lineHeight: 6.5,
+    gapAfter: 6,
+  });
+
+  writeHeading("1. Resumen ejecutivo", 2);
+  writeParagraph(report.executive_summary || "Sin resumen.");
+
+  writeHeading("2. Hallazgos", 2);
+  const sections = report.sections || [];
+  if (!sections.length) {
+    writeParagraph("No hay secciones disponibles.");
+  } else {
+    sections.forEach((section, index) => {
+      writeHeading(`${index + 1}. ${section.title || "Sección"}`, 3);
+      if (section.subquestion_id) {
+        writeParagraph(`Subpregunta: ${section.subquestion_id}`, {
+          size: 9,
+          color: [80, 80, 80],
+          lineHeight: 5,
+          gapAfter: 2,
+        });
+      }
+      writeParagraph(section.content || "");
+    });
+  }
+
+  const contradictions = report.contradictions || [];
+  if (contradictions.length) {
+    writeHeading("3. Contradicciones", 2);
+    contradictions.forEach((item) => {
+      writeParagraph(`${item.topic || "Tema"}: ${item.description || ""}`, {
+        indent: 2,
+      });
+    });
+  }
+
+  const limitations = report.limitations || [];
+  if (limitations.length) {
+    writeHeading(contradictions.length ? "4. Limitaciones" : "3. Limitaciones", 2);
+    limitations.forEach((item) => {
+      writeParagraph(`• ${item}`, { indent: 1, gapAfter: 2 });
+    });
+  }
+
+  const citations = report.citations || [];
+  if (citations.length) {
+    const n =
+      2 +
+      (contradictions.length ? 1 : 0) +
+      (limitations.length ? 1 : 0) +
+      1;
+    writeHeading(`${n}. Referencias`, 2);
+    citations.forEach((cite) => {
+      const type = cite.source_type ? ` (${cite.source_type})` : "";
+      const url = cite.url ? ` — ${cite.url}` : "";
+      writeParagraph(`[${cite.number}] ${cite.title || "Sin título"}${type}${url}`, {
+        size: 9.5,
+        lineHeight: 5,
+        gapAfter: 2.5,
+        indent: 1,
+      });
+    });
+  }
+
+  const total = doc.getNumberOfPages();
+  for (let i = 1; i <= total; i += 1) {
+    doc.setPage(i);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8);
+    doc.setTextColor(110, 110, 110);
+    doc.text(`Página ${i} de ${total}`, pageWidth / 2, pageHeight - 8, {
+      align: "center",
+    });
+  }
+
+  doc.save("research-report.pdf");
+}
+
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = queryEl.value.trim();
@@ -245,39 +404,16 @@ document.getElementById("download-md").addEventListener("click", () => {
   URL.revokeObjectURL(url);
 });
 
-document.getElementById("download-pdf").addEventListener("click", async () => {
-  if (reportEl.hidden) return;
-  if (typeof html2pdf === "undefined") {
-    showError("No se pudo cargar el generador de PDF. Revisa la conexión e inténtalo de nuevo.");
-    errorPanel.hidden = false;
-    return;
-  }
-
+document.getElementById("download-pdf").addEventListener("click", () => {
+  if (!lastReport) return;
   const pdfBtn = document.getElementById("download-pdf");
-  const actions = reportEl.querySelector(".report-actions");
-  const meta = reportEl.querySelector(".meta-panel");
-  const prevActionsDisplay = actions ? actions.style.display : "";
-  const prevMetaDisplay = meta ? meta.style.display : "";
   pdfBtn.disabled = true;
-  if (actions) actions.style.display = "none";
-  if (meta) meta.style.display = "none";
-
   try {
-    const opt = {
-      margin: [12, 12, 12, 12],
-      filename: "research-report.pdf",
-      image: { type: "jpeg", quality: 0.98 },
-      html2canvas: { scale: 2, useCORS: true, logging: false },
-      jsPDF: { unit: "mm", format: "a4", orientation: "portrait" },
-      pagebreak: { mode: ["css", "legacy"] },
-    };
-    await html2pdf().set(opt).from(reportEl).save();
+    exportReportPdf(lastReport);
   } catch (err) {
     showError(err.message || String(err));
     errorPanel.hidden = false;
   } finally {
-    if (actions) actions.style.display = prevActionsDisplay;
-    if (meta) meta.style.display = prevMetaDisplay;
     pdfBtn.disabled = false;
   }
 });
