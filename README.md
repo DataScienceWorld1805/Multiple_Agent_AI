@@ -185,7 +185,7 @@ Copia `.env.example` → `.env` dentro de `research-synthesis-agent/`.
 ```env
 # Gemini (recomendado en .env.example)
 LLM_PROVIDER=gemini
-LLM_MODEL=gemini-flash-latest
+LLM_MODEL=gemini-3.6-flash
 GEMINI_API_KEY=tu-api-key
 
 # OpenAI
@@ -199,8 +199,7 @@ GEMINI_API_KEY=tu-api-key
 # ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-> **Nota sobre Gemini:** modelos antiguos como `gemini-2.0-flash` pueden devolver `404 NOT_FOUND`. El ejemplo del proyecto usa `gemini-flash-latest`. Si un modelo falla, lista los disponibles con el SDK `google-genai` o prueba `gemini-3.6-flash` / `gemini-flash-latest`.
-
+> **Nota sobre Gemini:** modelos populares pueden devolver `503` por alta demanda o `404` si quedaron deprecados. El ejemplo del proyecto usa `gemini-3.6-flash`. Alternativas útiles: `gemini-flash-lite-latest`, `gemini-3.5-flash`, `gemini-3.1-flash-lite`.
 ### Búsqueda y papers
 
 ```env
