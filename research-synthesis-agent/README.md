@@ -4,6 +4,8 @@ Paquete del sistema multi-agente de investigación y síntesis (LangGraph · orc
 
 **Toda la documentación está en el [README del repositorio](../README.md)** (instalación, Docker, variables de entorno, CLI, arquitectura y contribución).
 
+Licencia: [MIT](../LICENSE).
+
 ```bash
 # Desde esta carpeta
 cp .env.example .env

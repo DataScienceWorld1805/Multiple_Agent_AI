@@ -350,7 +350,7 @@ Este proyecto es experimental / educativo. Los informes generados **no sustituye
 
 ## Licencia
 
-Aún no se ha publicado una licencia en el repositorio. Si vas a usarlo o redistribuirlo, contacta al autor o abre un issue pidiendo una licencia abierta (p. ej. MIT / Apache-2.0).
+Este proyecto se publica bajo la [licencia MIT](LICENSE). Podés usarlo, copiarlo, modificarlo, distribuirlo y usarlo en proyectos comerciales, con la única condición de conservar el aviso de copyright y la licencia.
 
 ---
 
