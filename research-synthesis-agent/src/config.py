@@ -31,7 +31,10 @@ class Settings(BaseSettings):
 
     # Search / papers
     tavily_api_key: str | None = None
-    search_provider: str = Field(default="tavily", description="tavily | fake")
+    search_provider: str = Field(
+        default="duckduckgo",
+        description="duckduckgo | tavily | fake",
+    )
     papers_provider: str = Field(default="arxiv", description="arxiv | fake")
 
     # Research plan

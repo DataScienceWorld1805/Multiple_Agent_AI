@@ -38,6 +38,10 @@ class WebResearcher(BaseResearcher):
         )
         findings: list[Finding] = []
         for hit in hits:
+            relevance = min(max(hit.score, 0.0), 1.0)
+            # Drop weak / off-topic hits so references stay query-aligned.
+            if relevance < 0.35 and hit.score < 0.5:
+                continue
             findings.append(
                 Finding(
                     id=f"f-web-{uuid.uuid4().hex[:8]}",
@@ -47,8 +51,8 @@ class WebResearcher(BaseResearcher):
                     source_title=hit.title,
                     source_url=hit.url or None,
                     source_type=SourceType.WEB,
-                    confidence=min(max(hit.score, 0.0), 1.0),
-                    relevance=min(max(hit.score, 0.0), 1.0),
+                    confidence=relevance,
+                    relevance=relevance,
                     metadata=hit.metadata,
                 )
             )

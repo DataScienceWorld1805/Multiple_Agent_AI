@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 
 from src.config import Settings, get_settings
@@ -16,6 +17,7 @@ from src.schemas.models import (
     ResearcherResult,
     ResearcherStatus,
     ResearchPlan,
+    SourceType,
 )
 
 logger = get_logger(__name__)
@@ -41,6 +43,9 @@ coherent report. Return ONLY JSON:
 Rules:
 - Only cite finding ids that appear in the provided findings.
 - Use citation numbers that match the provided citation map ([1], [2], ...).
+- Prefer web and academic sources with clear titles and URLs.
+- Do not invent sources; if evidence is weak, say so in limitations.
+- Keep claims tightly tied to the user query; discard off-topic findings.
 - Explicitly call out contradictions; never silently average conflicting claims.
 - If evidence is thin for a sub-question, note it in limitations.
 """
@@ -66,6 +71,8 @@ class Synthesizer:
         """Build FinalReport with numbered citations from real findings only."""
         with log_step(logger, agent="Synthesizer", message="synthesize"):
             findings = self._collect_findings(results)
+            # Internal KB is currently empty/disabled: never surface kb:// citations.
+            findings = [f for f in findings if f.source_type != SourceType.INTERNAL_KB]
             citations = self._build_citations(findings)
             citation_map = {c.finding_id: c.number for c in citations}
             limitations = self._limitations_from_results(plan, results)
@@ -107,6 +114,33 @@ class Synthesizer:
             ]
             all_limits = list(dict.fromkeys([*limitations, *extra_limits]))
 
+            used_ids = {
+                fid
+                for section in sections
+                for fid in section.finding_ids
+            } | {
+                fid
+                for contradiction in contradictions
+                for fid in contradiction.finding_ids
+            }
+            # Keep references focused: only findings actually used in the report,
+            # preferring those with a real URL.
+            cited_findings = [f for f in findings if f.id in used_ids] or findings
+            citations = self._build_citations(cited_findings)
+            number_by_id = {c.finding_id: c.number for c in citations}
+            sections = [
+                section.model_copy(
+                    update={
+                        "content": self._remap_citation_numbers(
+                            section.content,
+                            citation_map,
+                            number_by_id,
+                        )
+                    }
+                )
+                for section in sections
+            ]
+
             report = FinalReport(
                 query=query,
                 executive_summary=str(data.get("executive_summary") or "Sin resumen."),
@@ -116,7 +150,7 @@ class Synthesizer:
                 limitations=all_limits,
             )
             report.markdown = self._render_markdown(report)
-            self._assert_citations_grounded(report, valid_ids)
+            self._assert_citations_grounded(report, {f.id for f in cited_findings})
             return report
 
     def _collect_findings(self, results: list[ResearcherResult]) -> list[Finding]:
@@ -128,16 +162,42 @@ class Synthesizer:
     def _build_citations(self, findings: list[Finding]) -> list[Citation]:
         citations: list[Citation] = []
         for idx, finding in enumerate(findings, start=1):
+            title = finding.source_title.strip() or "Fuente sin título"
+            url = finding.source_url
+            if url and url.startswith("kb://"):
+                continue
             citations.append(
                 Citation(
                     number=idx,
                     finding_id=finding.id,
-                    title=finding.source_title,
-                    url=finding.source_url,
+                    title=title,
+                    url=url,
                     source_type=finding.source_type,
                 )
             )
+        # Renumber after possible skips.
+        for idx, citation in enumerate(citations, start=1):
+            citation.number = idx
         return citations
+
+    def _remap_citation_numbers(
+        self,
+        content: str,
+        old_map: dict[str, int],
+        new_map: dict[str, int],
+    ) -> str:
+        """Rewrite [n] markers after citations were filtered/renumbered."""
+        old_to_new: dict[int, int] = {}
+        for finding_id, old_num in old_map.items():
+            if finding_id in new_map:
+                old_to_new[old_num] = new_map[finding_id]
+
+        def repl(match: re.Match[str]) -> str:
+            old_num = int(match.group(1))
+            new_num = old_to_new.get(old_num)
+            return f"[{new_num}]" if new_num is not None else match.group(0)
+
+        return re.sub(r"\[(\d+)\]", repl, content)
 
     def _limitations_from_results(
         self,

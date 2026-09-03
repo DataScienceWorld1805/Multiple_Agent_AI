@@ -102,6 +102,15 @@ class ChromaVectorStore(VectorStore):
             ],
         )
 
+    def clear(self) -> None:
+        """Drop and recreate the collection (empty KB)."""
+        name = self._collection.name
+        self._client.delete_collection(name)
+        self._collection = self._client.get_or_create_collection(
+            name=name,
+            metadata={"hnsw:space": "cosine"},
+        )
+
     def query(self, text: str, top_k: int = 5) -> list[KBHit]:
         if self._collection.count() == 0:
             return []
@@ -137,6 +146,9 @@ def load_seed_documents(path: str | Path) -> list[KBDocument]:
         logger.warning("KB seed file missing: %s", seed_path)
         return []
     raw = json.loads(seed_path.read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        logger.warning("KB seed file is not a list: %s", seed_path)
+        return []
     docs: list[KBDocument] = []
     for item in raw:
         docs.append(
@@ -169,7 +181,12 @@ def create_vector_store(
             store = InMemoryVectorStore()
 
     docs = load_seed_documents(cfg.kb_seed_path)
-    if docs:
-        store.upsert(docs)
-        logger.info("Seeded vector store with %s documents", len(docs))
+    if not docs:
+        if isinstance(store, ChromaVectorStore):
+            store.clear()
+        logger.info("KB seed empty; vector store left without documents")
+        return store
+
+    store.upsert(docs)
+    logger.info("Seeded vector store with %s documents", len(docs))
     return store

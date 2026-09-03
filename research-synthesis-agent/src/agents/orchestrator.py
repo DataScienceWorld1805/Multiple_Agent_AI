@@ -29,7 +29,7 @@ Return ONLY valid JSON with this shape:
       "id": "sq-1",
       "question": "...",
       "rationale": "...",
-      "assigned_sources": ["web"|"paper"|"internal_kb", ...],
+      "assigned_sources": ["web"|"paper", ...],
       "priority": 1
     }
   ]
@@ -37,9 +37,12 @@ Return ONLY valid JSON with this shape:
 
 Rules:
 - Produce between MIN_SUB and MAX_SUB sub-questions.
-- Sub-questions must be independently investigable.
-- Assign each to the most relevant source types (one or more).
-- Prefer covering web, paper, and internal_kb across the plan when relevant.
+- Sub-questions must be independently investigable and tightly scoped to the user question.
+- Phrase each sub-question as a concrete search query (include domain terms from the user question).
+- Assign sources only among: "web" and/or "paper".
+- Do NOT assign "internal_kb" (the internal knowledge base is empty / disabled for now).
+- Prefer at least one "web" assignment when the topic has public guidance, manuals or standards online.
+- Prefer "paper" when peer-reviewed literature is likely useful.
 """
 
 
@@ -84,10 +87,7 @@ class Orchestrator:
         items = data.get("subquestions") or []
         subquestions: list[SubQuestion] = []
         for idx, item in enumerate(items, start=1):
-            sources = [
-                SourceType(s) if not isinstance(s, SourceType) else s
-                for s in item.get("assigned_sources") or [SourceType.WEB]
-            ]
+            sources = self._normalize_sources(item.get("assigned_sources"))
             subquestions.append(
                 SubQuestion(
                     id=item.get("id") or f"sq-{idx}",
@@ -107,6 +107,19 @@ class Orchestrator:
             subquestions=subquestions,
             max_subquestions=self.settings.max_subquestions,
         )
+
+    def _normalize_sources(self, raw_sources: Any) -> list[SourceType]:
+        """Keep only enabled sources; drop internal_kb while the KB is empty."""
+        allowed = {SourceType.WEB, SourceType.PAPER}
+        sources: list[SourceType] = []
+        for value in raw_sources or []:
+            try:
+                source = SourceType(value) if not isinstance(value, SourceType) else value
+            except ValueError:
+                continue
+            if source in allowed and source not in sources:
+                sources.append(source)
+        return sources or [SourceType.WEB]
 
     async def maybe_reformulate(
         self,
@@ -155,10 +168,9 @@ class Orchestrator:
             for sq in plan.subquestions:
                 if sq.id in rewritten:
                     item = rewritten[sq.id]
-                    sources = [
-                        SourceType(s)
-                        for s in item.get("assigned_sources") or sq.assigned_sources
-                    ]
+                    sources = self._normalize_sources(
+                        item.get("assigned_sources") or sq.assigned_sources
+                    )
                     new_subs.append(
                         SubQuestion(
                             id=sq.id,

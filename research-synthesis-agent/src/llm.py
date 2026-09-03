@@ -67,7 +67,7 @@ class FakeLLMClient(LLMClient):
                             "id": "sq-2",
                             "question": "What are commercial and economic barriers?",
                             "rationale": "Need market and deployment view",
-                            "assigned_sources": ["web", "internal_kb"],
+                            "assigned_sources": ["web", "paper"],
                             "priority": 2,
                         },
                     ]

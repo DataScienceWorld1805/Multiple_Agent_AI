@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,31 +39,74 @@ class FakeSearchProvider(SearchProvider):
     """Deterministic search provider for tests and offline mode."""
 
     def __init__(self, hits: list[SearchHit] | None = None) -> None:
-        self.hits = hits or [
-            SearchHit(
-                title="Example Web Result on Nuclear Fusion",
-                url="https://example.com/fusion-status",
-                snippet=(
-                    "Commercial fusion remains pre-commercial; several pilots "
-                    "target net energy demonstrations this decade."
-                ),
-                score=0.9,
-            ),
-            SearchHit(
-                title="IEA Fusion Outlook",
-                url="https://example.com/iea-fusion",
-                snippet=(
-                    "Economic viability depends on materials, tritium supply, "
-                    "and sustained high gain."
-                ),
-                score=0.8,
-            ),
-        ]
+        self.hits = hits
         self.calls: list[str] = []
 
     async def search(self, query: str, max_results: int = 5) -> list[SearchHit]:
         self.calls.append(query)
-        return self.hits[:max_results]
+        if self.hits is not None:
+            return self.hits[:max_results]
+        # Query-aware placeholders so offline demos stay on-topic.
+        slug = re.sub(r"\s+", "-", query.strip().lower())[:48] or "query"
+        return [
+            SearchHit(
+                title=f"Guía relacionada: {query[:80]}",
+                url=f"https://example.com/search/{slug}",
+                snippet=(
+                    f"Resumen de referencia alineado con la consulta «{query[:120]}». "
+                    "Modo fake: sustituir por resultados reales con "
+                    "SEARCH_PROVIDER=duckduckgo o tavily."
+                ),
+                score=0.85,
+            ),
+            SearchHit(
+                title=f"Manual / procedimiento: {query[:60]}",
+                url=f"https://example.com/manual/{slug}",
+                snippet=(
+                    "Pasos, buenas prácticas y criterios de redacción asociados "
+                    "al tema consultado (resultado sintético de modo offline)."
+                ),
+                score=0.75,
+            ),
+        ][:max_results]
+
+
+class DuckDuckGoSearchProvider(SearchProvider):
+    """Web search via DuckDuckGo (no API key required)."""
+
+    def __init__(self, settings: Settings) -> None:
+        self._timeout = settings.researcher_timeout_seconds
+
+    async def search(self, query: str, max_results: int = 5) -> list[SearchHit]:
+        def _run() -> list[dict[str, Any]]:
+            try:
+                from duckduckgo_search import DDGS
+            except ImportError:  # pragma: no cover
+                from ddgs import DDGS  # type: ignore[no-redef]
+
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=max_results))
+
+        raw = await asyncio.wait_for(asyncio.to_thread(_run), timeout=self._timeout)
+        hits: list[SearchHit] = []
+        for idx, item in enumerate(raw):
+            title = str(item.get("title") or "Untitled").strip()
+            url = str(item.get("href") or item.get("link") or "").strip()
+            snippet = str(item.get("body") or item.get("snippet") or "").strip()
+            if not url:
+                continue
+            relevance = _query_overlap_score(query, f"{title} {snippet}")
+            hits.append(
+                SearchHit(
+                    title=title,
+                    url=url,
+                    snippet=snippet,
+                    score=max(0.35, relevance),
+                    metadata={"provider": "duckduckgo", "rank": idx + 1},
+                )
+            )
+        hits.sort(key=lambda h: h.score, reverse=True)
+        return hits[:max_results]
 
 
 class TavilySearchProvider(SearchProvider):
@@ -97,16 +142,59 @@ class TavilySearchProvider(SearchProvider):
 
         hits: list[SearchHit] = []
         for item in data.get("results", []):
+            title = item.get("title") or "Untitled"
+            url = item.get("url") or ""
+            snippet = item.get("content") or item.get("snippet") or ""
+            base = float(item.get("score") or 0.5)
+            relevance = _query_overlap_score(query, f"{title} {snippet}")
             hits.append(
                 SearchHit(
-                    title=item.get("title") or "Untitled",
-                    url=item.get("url") or "",
-                    snippet=item.get("content") or item.get("snippet") or "",
-                    score=float(item.get("score") or 0.5),
-                    metadata={"raw": item},
+                    title=title,
+                    url=url,
+                    snippet=snippet,
+                    score=max(base, relevance),
+                    metadata={"raw": item, "provider": "tavily"},
                 )
             )
+        hits.sort(key=lambda h: h.score, reverse=True)
         return hits
+
+
+def _query_overlap_score(query: str, text: str) -> float:
+    """Lightweight relevance score based on meaningful token overlap."""
+    stop = {
+        "the",
+        "and",
+        "for",
+        "with",
+        "from",
+        "that",
+        "this",
+        "what",
+        "cual",
+        "cómo",
+        "como",
+        "para",
+        "una",
+        "unos",
+        "unas",
+        "del",
+        "los",
+        "las",
+        "por",
+        "con",
+        "sobre",
+    }
+    q_tokens = {
+        t
+        for t in re.findall(r"[a-zA-ZáéíóúñÁÉÍÓÚÑ0-9]{3,}", query.lower())
+        if t not in stop
+    }
+    if not q_tokens:
+        return 0.5
+    hay = text.lower()
+    overlap = sum(1 for t in q_tokens if t in hay)
+    return min(1.0, overlap / max(len(q_tokens), 1))
 
 
 def create_search_provider(settings: Settings | None = None) -> SearchProvider:
@@ -115,6 +203,8 @@ def create_search_provider(settings: Settings | None = None) -> SearchProvider:
     provider = cfg.search_provider.lower()
     if provider == "fake":
         return FakeSearchProvider()
+    if provider in {"duckduckgo", "ddg"}:
+        return DuckDuckGoSearchProvider(cfg)
     if provider == "tavily":
         return TavilySearchProvider(cfg)
     raise ValueError(f"Unsupported search_provider: {cfg.search_provider}")
