@@ -2,23 +2,24 @@
 
 Paquete del sistema multi-agente de investigación y síntesis (LangGraph · orchestrator-worker).
 
-**Toda la documentación está en el [README del repositorio](../README.md)** (instalación, Docker, variables de entorno, CLI, arquitectura y contribución).
+**Documentación completa:** [README del repositorio](../README.md) (arquitectura, CLI, API HTTP, UI web, KB interna, Docker, variables de entorno y contribución).
 
-## UI local
+## Inicio rápido
 
 ```bash
+cp .env.example .env          # añade tu API key de LLM
 pip install -r requirements.txt
-cp .env.example .env   # si aún no tienes .env
-python -m src.api
-```
 
-Abre [http://127.0.0.1:8000](http://127.0.0.1:8000). La UI lanza jobs vía `POST /api/research` y hace polling hasta obtener el informe.
+# Interfaz web + API
+python -m src.api             # http://127.0.0.1:8000
 
-Licencia: [MIT](../LICENSE).
+# CLI
+python -m src.main "tu pregunta" -o report.md
 
-```bash
-# Desde esta carpeta
-cp .env.example .env
+# Docker
 make docker-build
 make docker-run QUERY='¿Cuál es el estado actual de la fusión nuclear como fuente de energía comercial?'
+make docker-serve             # UI en el puerto 8000
 ```
+
+Licencia: [MIT](../LICENSE).
