@@ -14,9 +14,9 @@ let lastMarkdown = "";
 let lastQuery = "";
 
 const STAGE_HINTS = [
-  "El orquestador descompone la pregunta…",
-  "Workers consultan web, papers y KB…",
-  "El sintetizador arma el informe citado…",
+  "Elaborando el plan de investigación…",
+  "Consultando fuentes web, literatura y base interna…",
+  "Sintetizando hallazgos y construyendo citas…",
 ];
 
 async function loadHealth() {
@@ -24,9 +24,10 @@ async function loadHealth() {
     const res = await fetch("/api/health");
     if (!res.ok) throw new Error("health failed");
     const data = await res.json();
-    configHint.textContent = `LLM: ${data.llm_provider} · ${data.llm_model} · search: ${data.search_provider} · papers: ${data.papers_provider}`;
+    configHint.textContent = `Entorno · modelo ${data.llm_provider}/${data.llm_model} · búsqueda ${data.search_provider} · papers ${data.papers_provider}`;
   } catch {
-    configHint.textContent = "API no disponible. Arranca con: python -m src.api";
+    configHint.textContent =
+      "Servicio no disponible. Ejecute: python -m src.api";
   }
 }
 
@@ -67,10 +68,10 @@ function renderReport(job) {
   const sectionsRoot = document.getElementById("sections");
   sectionsRoot.innerHTML = (report.sections || [])
     .map(
-      (section) => `
+      (section, index) => `
       <article class="section-item">
-        <p class="section-meta">${escapeHtml(section.subquestion_id || "")}</p>
-        <h3>${escapeHtml(section.title || "")}</h3>
+        <p class="section-meta">Subpregunta ${escapeHtml(section.subquestion_id || String(index + 1))}</p>
+        <h4>${escapeHtml(section.title || "")}</h4>
         <p>${linkCitations(section.content || "")}</p>
       </article>`
     )
@@ -103,7 +104,7 @@ function renderReport(job) {
       const url = cite.url
         ? `<a class="citation-link" href="${escapeHtml(cite.url)}" target="_blank" rel="noopener noreferrer">${title}</a>`
         : title;
-      return `<li id="cite-${cite.number}">[${cite.number}] ${url} <span class="badge">${type}</span></li>`;
+      return `<li id="cite-${cite.number}">[${cite.number}] ${url}<span class="source-tag">${type}</span></li>`;
     })
     .join("");
 
@@ -117,13 +118,13 @@ function renderReport(job) {
           <li>
             <span class="badge">${escapeHtml(sq.id)}</span>
             ${escapeHtml(sq.question)}
-            <div class="section-meta">Fuentes: ${(sq.assigned_sources || []).map(escapeHtml).join(", ")}</div>
+            <div class="section-meta">Fuentes asignadas: ${(sq.assigned_sources || []).map(escapeHtml).join(", ")}</div>
           </li>`
           )
           .join("")}
       </ul>`;
   } else {
-    planView.innerHTML = "<p class='section-meta'>Sin plan disponible.</p>";
+    planView.innerHTML = "<p class='section-meta'>Plan no disponible.</p>";
   }
 
   const resultsView = document.getElementById("results-view");
@@ -135,7 +136,7 @@ function renderReport(job) {
             (r) => `
           <li>
             <span class="badge">${escapeHtml(r.researcher_type)}</span>
-            ${escapeHtml(r.subquestion_id)} · ${escapeHtml(r.status)} ·
+            ${escapeHtml(r.subquestion_id)} · estado ${escapeHtml(r.status)} ·
             ${r.findings_count} hallazgos · ${Math.round(r.duration_ms)} ms
             ${r.error_message ? `<div class="section-meta">${escapeHtml(r.error_message)}</div>` : ""}
           </li>`
@@ -210,7 +211,7 @@ form.addEventListener("submit", async (event) => {
   hidePanels();
   setBusy(true);
   statusPanel.hidden = false;
-  statusLabel.textContent = "En cola…";
+  statusLabel.textContent = "Consulta en cola";
   statusMeta.textContent = STAGE_HINTS[0];
 
   try {
@@ -224,7 +225,7 @@ form.addEventListener("submit", async (event) => {
       throw new Error(detail.detail || `Error ${res.status}`);
     }
     const data = await res.json();
-    statusLabel.textContent = "Investigando…";
+    statusLabel.textContent = "Investigación en curso";
     await pollJob(data.job_id);
   } catch (err) {
     setBusy(false);
